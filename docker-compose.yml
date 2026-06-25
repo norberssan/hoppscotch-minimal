@@ -1,0 +1,86 @@
+# Hoppscotch Community Edition - All-in-One
+# Uses the official hoppscotch/hoppscotch image from Docker Hub
+#
+# Usage:
+#   docker compose up -d
+#
+# Access:
+#   App:      http://localhost:3000
+#   Admin:    http://localhost:3100
+#   Backend:  http://localhost:3170
+#   Mailpit:  http://localhost:8025
+
+services:
+  hoppscotch-migrate:
+    image: hoppscotch/hoppscotch:latest
+    env_file:
+      - .env
+    depends_on:
+      hoppscotch-db:
+        condition: service_healthy
+    working_dir: /dist/backend
+    command: sh -c "npx prisma migrate deploy"
+    restart: "no"
+
+  hoppscotch-seed:
+    image: postgres:15
+    env_file:
+      - .env
+    depends_on:
+      hoppscotch-migrate:
+        condition: service_completed_successfully
+    volumes:
+      - ./volumes/init/seed.sql:/seed.sql:ro
+    command: >
+      sh -c "psql --set ON_ERROR_STOP=on $$DATABASE_URL -f /seed.sql"
+    restart: "no"
+
+  hoppscotch:
+    image: hoppscotch/hoppscotch:latest
+    container_name: hoppscotch
+    restart: unless-stopped
+    env_file:
+      - .env
+    depends_on:
+      hoppscotch-db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      hoppscotch-seed:
+        condition: service_completed_successfully
+    ports:
+      - "3000:3000"   # Main app
+      - "3100:3100"   # Admin dashboard
+      - "3170:3170"   # Backend API
+      - "3200:3200"   # Bundle server
+
+  hoppscotch-db:
+    image: postgres:15
+    container_name: hoppscotch-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: hoppscotch
+    volumes:
+      - ./volumes/db:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d hoppscotch"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: hoppscotch-mailpit
+    restart: unless-stopped
+    volumes:
+      - ./volumes/mailpit:/data
+    environment:
+      MP_DATABASE: /data/mailpit.db
+    ports:
+      - "8025:8025"   # Web UI
+      - "1025:1025"   # SMTP
+
